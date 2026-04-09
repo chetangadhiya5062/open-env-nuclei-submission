@@ -38,8 +38,8 @@ except Exception as e:  # pragma: no cover
     ) from e
 
 try:
-    from ..models import DataCleaningAction, DataCleaningObservation
-    from .data_cleaning_env_environment import DataCleaningEnvironment
+    from models import DataCleaningAction, DataCleaningObservation
+    from server.data_cleaning_env_environment import DataCleaningEnvironment
 except ModuleNotFoundError:
     from models import DataCleaningAction, DataCleaningObservation
     from server.data_cleaning_env_environment import DataCleaningEnvironment

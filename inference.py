@@ -3,8 +3,8 @@ import requests
 import os
 import re
 
-from data_cleaning_env.client import DataCleaningEnv
-from data_cleaning_env.models import DataCleaningAction
+from client import DataCleaningEnv
+from models import DataCleaningAction
 
 # =========================
 # 🔥 HUGGINGFACE SETUP
