@@ -37,12 +37,8 @@ except Exception as e:  # pragma: no cover
         "openenv is required for the web interface. Install dependencies with '\n    uv sync\n'"
     ) from e
 
-try:
-    from models import DataCleaningAction, DataCleaningObservation
-    from server.data_cleaning_env_environment import DataCleaningEnvironment
-except ModuleNotFoundError:
-    from models import DataCleaningAction, DataCleaningObservation
-    from server.data_cleaning_env_environment import DataCleaningEnvironment
+from models import DataCleaningAction, DataCleaningObservation
+from server.data_cleaning_env_environment import DataCleaningEnvironment
 
 
 # ✅ Create FastAPI app
@@ -90,6 +86,12 @@ def main():
     print(f"\n🚀 Starting server on http://{args.host}:{args.port}\n")
 
     uvicorn.run(app, host=args.host, port=args.port)
+
+from fastapi.responses import JSONResponse
+
+@app.get("/health")
+def health():
+    return JSONResponse({"status": "ok"})
 
 if __name__ == "__main__":
     main()
