@@ -2,27 +2,19 @@ import json
 import requests
 import os
 import re
+import time
 
 from client import DataCleaningEnv
 from models import DataCleaningAction
 
 # =========================
-# 🔥 HUGGINGFACE SETUP
+# 🔥 CONFIG
 # =========================
 API_BASE_URL = os.getenv("API_BASE_URL", "https://router.huggingface.co/v1")
 MODEL_NAME = os.getenv("MODEL_NAME", "meta-llama/Meta-Llama-3-8B-Instruct")
 HF_TOKEN = os.getenv("HF_TOKEN")
 
-if not HF_TOKEN:
-    raise Exception("HF_TOKEN not set")
-
-# =========================
-# 💤 OPENROUTER (BACKUP)
-# =========================
-# OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
-
-ENV_URL = "http://localhost:8001"
-
+ENV_URL = os.getenv("ENV_URL", "http://localhost:7860")
 
 from openai import OpenAI
 
@@ -31,28 +23,58 @@ client = OpenAI(
     api_key=HF_TOKEN
 )
 
+# =========================
+# 🔁 RETRY ENV CONNECTION
+# =========================
+def create_env_with_retry(url, retries=5, delay=2):
+    for i in range(retries):
+        try:
+            return DataCleaningEnv(base_url=url)
+        except Exception as e:
+            print(f"[WARN] Retry {i+1}/{retries} - Env not ready: {e}")
+            time.sleep(delay)
+    raise Exception("Failed to connect to environment after retries")
+
+
+# =========================
+# 🤖 SAFE MODEL CALL
+# =========================
 def call_hf_model(prompt):
-    response = client.chat.completions.create(
-        model=MODEL_NAME,
-        messages=[
-            {"role": "system", "content": "You are an intelligent data cleaning agent. Always return valid JSON."},
-            {"role": "user", "content": prompt}
-        ]
-    )
-    return response
+    try:
+        response = client.chat.completions.create(
+            model=MODEL_NAME,
+            messages=[
+                {"role": "system", "content": "You are an intelligent data cleaning agent. Always return valid JSON."},
+                {"role": "user", "content": prompt}
+            ]
+        )
+        return response
+    except Exception as e:
+        print("❌ Model call failed:", e)
+        return None
 
 
+# =========================
+# 🚀 MAIN LOOP
+# =========================
 def run_episode():
-    with DataCleaningEnv(base_url=ENV_URL).sync() as env:
-        result = env.reset()
-        done = False
+    try:
+        env_client = create_env_with_retry(ENV_URL)
 
-        print("START")
+        with env_client.sync() as env:
+            result = env.reset()
+            done = False
 
-        while not done:
-            obs = result.observation
+            print("[START]", flush=True)
 
-            prompt = f"""
+            while not done:
+                try:
+                    obs = result.observation
+                except Exception as e:
+                    print("❌ Observation error:", e)
+                    break
+
+                prompt = f"""
 You are a data cleaning agent.
 
 Your PRIMARY goal is to clean ALL missing values.
@@ -62,12 +84,6 @@ STRICT RULES:
 - ALWAYS move to a different column if one is already clean
 - DO NOT fill a column if it has no missing values
 - NEVER repeat the same column if already filled
-- Always choose a column that still has missing values      
-- NEVER choose a column that has 0 missing values
-- ALWAYS choose a column with remaining missing values
-- If a column is already cleaned, move to another column
-- DO NOT repeat the same action on the same column
-
 
 DATA SAMPLE:
 {obs.data_sample}
@@ -77,13 +93,6 @@ Columns: {obs.column_names}
 Missing values: {obs.missing_values_count_per_column}
 Duplicate rows: {obs.duplicate_row_count}
 
-TASK:
-Choose the BEST next action to reduce missing values.
-
-Available actions:
-- fill_missing (requires column_name and value)
-- remove_duplicates
-
 Return ONLY valid JSON:
 {{
   "action_type": "...",
@@ -92,79 +101,111 @@ Return ONLY valid JSON:
 }}
 """
 
-            # =========================
-            # 🔥 HUGGINGFACE CALL
-            # =========================
-            response = call_hf_model(prompt)
+                # 🔥 SAFE MODEL CALL
+                response = call_hf_model(prompt)
 
-            print("\nRAW RESPONSE:", response)
+                if response is None:
+                    action_json = {
+                        "action_type": "fill_missing",
+                        "column_name": obs.column_names[0],
+                        "value": "missing"
+                    }
+                else:
+                    try:
+                        action_text = response.choices[0].message.content
+                    except Exception:
+                        print("❌ Bad model response")
+                        action_text = ""
 
-            try:
-                action_text = response.choices[0].message.content
+                    # CLEAN
+                    if "```" in action_text:
+                        action_text = action_text.split("```")[1]
 
-            except Exception:
-                raise Exception(f"HF failed: {response}")
+                    action_text = action_text.replace("json", "").strip()
+                    action_text = re.sub(r"#.*", "", action_text)
+                    action_text = action_text.replace(",}", "}").replace(",]", "]")
 
-            # =========================
-            # CLEAN OUTPUT
-            # =========================
-            if "```" in action_text:
-                action_text = action_text.split("```")[1]
+                    try:
+                        action_json = json.loads(action_text)
+                        if isinstance(action_json, list):
+                            action_json = action_json[0]
+                    except Exception:
+                        print("❌ JSON parse failed, fallback")
+                        action_json = {
+                            "action_type": "fill_missing",
+                            "column_name": obs.column_names[0],
+                            "value": "missing"
+                        }
 
-            action_text = action_text.replace("json", "").strip()
+                # =========================
+                # 🔥 FIX INVALID ACTION TYPES
+                # =========================
+                valid_actions = [
+                    "fill_missing",
+                    "drop_rows_with_missing",
+                    "remove_duplicates",
+                    "finish_cleaning"
+                ]
 
-            # 🔥 CLEAN INVALID JSON (REMOVE COMMENTS)
-            action_text = re.sub(r"#.*", "", action_text)
+                action_type = action_json.get("action_type")
 
-            # Remove trailing commas (optional safety)
-            action_text = action_text.replace(",}", "}").replace(",]", "]")
+                if action_type == "fill_missing_values":
+                    print("[WARN] Fixing action_type: fill_missing_values → fill_missing")
+                    action_json["action_type"] = "fill_missing"
 
-            try:
-                action_json = json.loads(action_text)
-                # 🔥 FIX: handle list response from LLM
-                if isinstance(action_json, list):
-                    action_json = action_json[0]
-            except Exception as e:
-                print("❌ Failed to parse JSON:", action_text)
+                elif action_type not in valid_actions:
+                    print(f"[WARN] Invalid action_type: {action_type}, using fallback")
+                    action_json = {
+                        "action_type": "fill_missing",
+                        "column_name": obs.column_names[0],
+                        "value": "missing"
+                    }
 
-                # ✅ FALLBACK ACTION (ADD HERE)
-                action_json = {
-                    "action_type": "fill_missing",
-                    "column_name": obs.column_names[0],
-                    "value": "missing"
-                }
+                # VALIDATE COLUMN
+                if action_json.get("action_type") == "fill_missing":
+                    col = action_json.get("column_name")
+                    if obs.missing_values_count_per_column.get(col, 0) == 0:
+                        for c, v in obs.missing_values_count_per_column.items():
+                            if v > 0:
+                                action_json["column_name"] = c
+                                break
 
-            if action_json["action_type"] == "fill_missing":
-                col = action_json["column_name"]
+                if "value" in action_json and action_json["value"] is not None:
+                    action_json["value"] = str(action_json["value"])
 
-                if obs.missing_values_count_per_column.get(col, 0) == 0:
-                    # 🔥 FORCE SWITCH TO VALID COLUMN
-                    for c, v in obs.missing_values_count_per_column.items():
-                        if v > 0:
-                            action_json["column_name"] = c
-                            break
+                try:
+                    action = DataCleaningAction(**action_json)
+                except Exception as e:
+                    print("❌ Action creation failed:", e)
+                    break
 
-            if "value" in action_json and action_json["value"] is not None:
-                action_json["value"] = str(action_json["value"])
+                print(f"[STEP] action={action_json}", flush=True)
 
-            action = DataCleaningAction(**action_json)
-            
-            print(f"STEP: {action_json}")
+                # 🔥 SAFE STEP
+                try:
+                    result = env.step(action)
+                except Exception as e:
+                    print("❌ Step failed:", e)
+                    break
 
-            result = env.step(action)
-            obs = result.observation
+                obs = result.observation
 
-            # 🔥 FORCE STOP FROM CLIENT SIDE
-            if sum(obs.missing_values_count_per_column.values()) == 0:
-                print("🔥 CLIENT: Data cleaned → stopping early")
-                break
+                # STOP CONDITION
+                if sum(obs.missing_values_count_per_column.values()) == 0:
+                    print("[INFO] Data cleaned → stopping early")
+                    break
 
-            done = obs.done
+                done = obs.done
 
-        print("\n✅ Final Reward:", result.observation.reward)
-        
-        print("END")
+            print("[END] success=true", flush=True)
+
+    except Exception as e:
+        print("❌ FATAL ERROR:", e)
+        print("[END] success=false", flush=True)
 
 
+# =========================
+# ENTRY
+# =========================
 if __name__ == "__main__":
     run_episode()
