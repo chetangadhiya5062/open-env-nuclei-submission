@@ -21,6 +21,13 @@ class DataCleaningEnvironment(Environment):
 
     SUPPORTS_CONCURRENT_SESSIONS: bool = True
 
+    # 🔥 CRITICAL: DEFINE TASKS FOR VALIDATOR
+    TASKS = [
+        {"id": "easy-clean"},
+        {"id": "medium-clean"},
+        {"id": "hard-clean"},
+    ]
+
     def __init__(self):
         self._state = State(episode_id=str(uuid4()), step_count=0)
         self.df: pd.DataFrame = None
@@ -32,20 +39,37 @@ class DataCleaningEnvironment(Environment):
     # =========================
     # RESET
     # =========================
-    def reset(self):
+    def reset(self, task_id: str = "easy-clean"):
         self._state = State(episode_id=str(uuid4()), step_count=0)
         self.total_reward = 0.0
 
-        data = {
-            "name": ["Alice", "Bob", "Alice", "Charlie", "David"],
-            "age": [25, None, 25, 30, None],
-            "city": ["Delhi", "Mumbai", "Delhi", None, "Pune"]
-        }
+        if task_id == "easy-clean":
+            data = {
+                "name": ["Alice", "Bob", "Charlie"],
+                "age": [25, None, 30],
+                "city": ["Delhi", "Mumbai", "Pune"]
+            }
+
+        elif task_id == "medium-clean":
+            data = {
+                "name": ["Alice", "Bob", "Alice", "Charlie"],
+                "age": [25, None, 25, None],
+                "city": ["Delhi", "Mumbai", "Delhi", None]
+            }
+
+        elif task_id == "hard-clean":
+            data = {
+                "name": ["Alice", "Bob", "Alice", "Charlie", "Bob"],
+                "age": [25, None, 25, None, None],
+                "city": ["Delhi", "Mumbai", "Delhi", None, "mumbai"]
+            }
+
+        else:
+            raise ValueError(f"Unknown task_id: {task_id}")
 
         self.df = pd.DataFrame(data)
         self.original_df = self.df.copy()
 
-        # 🔥 STORE INITIAL STATE (FOR SCORING)
         self.initial_missing = self.df.isnull().sum().sum()
         self.initial_duplicates = self.df.duplicated().sum()
 
@@ -64,9 +88,6 @@ class DataCleaningEnvironment(Environment):
         reward_score = 0.0
         done = False
 
-        # =========================
-        # APPLY ACTION
-        # =========================
         if action.action_type == "fill_missing":
             if action.column_name in self.df.columns:
                 if self.df[action.column_name].isnull().sum() == 0:
@@ -84,16 +105,11 @@ class DataCleaningEnvironment(Environment):
         elif action.action_type == "finish_cleaning":
             done = True
 
-        # =========================
-        # NEW STATE
-        # =========================
         new_missing = self.df.isnull().sum().sum()
         new_rows = len(self.df)
         new_duplicates = self.df.duplicated().sum()
 
-        # =========================
-        # REWARD LOGIC
-        # =========================
+        # REWARD
         if action.action_type == "fill_missing":
             if prev_missing == new_missing:
                 reward_score -= 2.0
@@ -112,54 +128,47 @@ class DataCleaningEnvironment(Environment):
             else:
                 reward_score -= 1.0
 
-        # BONUS
         if new_missing == 0 and new_duplicates == 0:
             reward_score += 5.0
             done = True
 
-        # =========================
-        # STEP LIMIT
-        # =========================
         if self._state.step_count >= 10:
             done = True
 
-        # =========================
-        # COMPUTE SCORE (🔥 CRITICAL FIX)
-        # =========================
+        # 🔥 GRADER
         score = self._compute_score(new_missing, new_duplicates)
 
-        # =========================
-        # OBSERVATION
-        # =========================
         obs = self._get_obs()
 
         self.total_reward += reward_score
         obs.reward = self.total_reward
         obs.done = done
 
-        # 🔥 ADD SCORE TO STATE (REQUIRED)
-        self._state.score = score
+        # 🔥 REQUIRED FOR VALIDATOR
+        self._state.score = float(score)
 
         return obs
 
     # =========================
-    # 🔥 GRADER (MOST IMPORTANT)
+    # GRADER
     # =========================
     def _compute_score(self, missing, duplicates):
         total_initial = self.initial_missing + self.initial_duplicates
 
         if total_initial == 0:
-            return 0.5  # safe default
+            return 0.5
 
         current_total = missing + duplicates
 
         progress = 1 - (current_total / total_initial)
 
-        # 🔥 STRICT RANGE (0,1)
-        return max(0.05, min(0.95, progress))
+        # 🔥 STRICT RANGE
+        score = max(0.05, min(0.95, progress))
+
+        return float(score)
 
     # =========================
-    # OBSERVATION
+    # OBS
     # =========================
     def _get_obs(self) -> DataCleaningObservation:
         return DataCleaningObservation(
