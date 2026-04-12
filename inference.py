@@ -7,10 +7,11 @@ import time
 from client import DataCleaningEnv
 from models import DataCleaningAction
 
+# =========================
+# 🔥 CONFIG
+# =========================
 API_BASE_URL = os.getenv("API_BASE_URL", "https://router.huggingface.co/v1")
-# MODEL_NAME = os.getenv("MODEL_NAME", "meta-llama/Meta-Llama-3.2-3B-Instruct")
-MODEL_NAME = os.getenv("MODEL_NAME", "Qwen/Qwen2.5-7B-Instruct")
-# MODEL_NAME = os.getenv("MODEL_NAME", "mistralai/Mistral-7B-Instruct-v0.2")
+MODEL_NAME = os.getenv("MODEL_NAME", "meta-llama/Meta-Llama-3-8B-Instruct")
 HF_TOKEN = os.getenv("HF_TOKEN")
 
 ENV_URL = os.getenv("ENV_URL", "http://localhost:7860")
@@ -22,6 +23,9 @@ client = OpenAI(
     api_key=HF_TOKEN
 )
 
+# =========================
+# 🔁 RETRY ENV CONNECTION
+# =========================
 def create_env_with_retry(url, retries=5, delay=2):
     for i in range(retries):
         try:
@@ -32,6 +36,9 @@ def create_env_with_retry(url, retries=5, delay=2):
     raise Exception("Failed to connect to environment after retries")
 
 
+# =========================
+# 🤖 SAFE MODEL CALL
+# =========================
 def call_hf_model(prompt):
     try:
         response = client.chat.completions.create(
@@ -47,6 +54,9 @@ def call_hf_model(prompt):
         return None
 
 
+# =========================
+# 🚀 MAIN LOOP
+# =========================
 def run_episode():
     try:
         env_client = create_env_with_retry(ENV_URL)
@@ -91,6 +101,7 @@ Return ONLY valid JSON:
 }}
 """
 
+                # 🔥 SAFE MODEL CALL
                 response = call_hf_model(prompt)
 
                 if response is None:
@@ -102,11 +113,11 @@ Return ONLY valid JSON:
                 else:
                     try:
                         action_text = response.choices[0].message.content
-                        print(f"🔍 RAW LLM RESPONSE:\n{action_text}\n")
                     except Exception:
                         print("❌ Bad model response")
                         action_text = ""
 
+                    # CLEAN
                     if "```" in action_text:
                         action_text = action_text.split("```")[1]
 
@@ -118,15 +129,26 @@ Return ONLY valid JSON:
                         action_json = json.loads(action_text)
                         if isinstance(action_json, list):
                             action_json = action_json[0]
+
                     except Exception:
-                        print("❌ JSON parse failed, fallback")
+                        print("❌ JSON parse failed, trying recovery")
+
+                        # 🔥 TRY TO EXTRACT VALUE FROM TEXT
+                        value_match = re.search(r'"value"\s*:\s*"?([^",}]+)"?', action_text)
+                        column_match = re.search(r'"column_name"\s*:\s*"?([^",}]+)"?', action_text)
+
+                        extracted_value = value_match.group(1) if value_match else "missing"
+                        extracted_column = column_match.group(1) if column_match else obs.column_names[0]
 
                         action_json = {
                             "action_type": "fill_missing",
-                            "column_name": obs.column_names[0],
-                            "value": "missing"
+                            "column_name": extracted_column,
+                            "value": extracted_value
                         }
 
+                # =========================
+                # 🔥 FIX INVALID ACTION TYPES
+                # =========================
                 valid_actions = [
                     "fill_missing",
                     "drop_rows_with_missing",
@@ -134,7 +156,7 @@ Return ONLY valid JSON:
                     "finish_cleaning"
                 ]
 
-                action_type = action_json.get("action_type") if isinstance(action_json, dict) else None
+                action_type = action_json.get("action_type")
 
                 if action_type == "fill_missing_values":
                     print("[WARN] Fixing action_type: fill_missing_values → fill_missing")
@@ -142,17 +164,13 @@ Return ONLY valid JSON:
 
                 elif action_type not in valid_actions:
                     print(f"[WARN] Invalid action_type: {action_type}, using fallback")
-
-                    fallback_value = "missing"
-                    if isinstance(action_json, dict):
-                        fallback_value = action_json.get("value") or "missing"
-
                     action_json = {
                         "action_type": "fill_missing",
                         "column_name": obs.column_names[0],
-                        "value": str(fallback_value)
+                        "value": "missing"
                     }
 
+                # VALIDATE COLUMN
                 if action_json.get("action_type") == "fill_missing":
                     col = action_json.get("column_name")
                     if obs.missing_values_count_per_column.get(col, 0) == 0:
@@ -172,6 +190,7 @@ Return ONLY valid JSON:
 
                 print(f"[STEP] action={action_json}", flush=True)
 
+                # 🔥 SAFE STEP
                 try:
                     result = env.step(action)
                 except Exception as e:
@@ -180,6 +199,7 @@ Return ONLY valid JSON:
 
                 obs = result.observation
 
+                # STOP CONDITION
                 if sum(obs.missing_values_count_per_column.values()) == 0:
                     print("[INFO] Data cleaned → stopping early")
                     break
@@ -193,5 +213,8 @@ Return ONLY valid JSON:
         print("[END] success=false", flush=True)
 
 
+# =========================
+# ENTRY
+# =========================
 if __name__ == "__main__":
     run_episode()

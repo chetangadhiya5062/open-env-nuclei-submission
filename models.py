@@ -11,7 +11,6 @@ Data models for the Data Cleaning Env Environment.
 from typing import Dict, List, Optional, Literal, Any
 from openenv.core.env_server.types import Action, Observation
 from pydantic import Field
-from pydantic import BaseModel
 
 
 class DataCleaningAction(Action):
@@ -36,10 +35,9 @@ class DataCleaningObservation(Observation):
     duplicate_row_count: int
     total_row_count: int
     column_names: List[str]
+
     # ✅ NEW FIELD (Phase 12)
-    # data_sample: List[Dict[str, Any]]
     data_sample: List[Dict[str, Any]]
 
-    reward: Optional[float] = None
-    done: Optional[bool] = None
-    score: Optional[float] = None
+    reward: float = 0.0
+    done: bool = False
