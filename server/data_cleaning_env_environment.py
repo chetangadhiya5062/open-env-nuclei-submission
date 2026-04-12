@@ -30,9 +30,18 @@ class DataCleaningEnvironment(Environment):
 
     # 🔥 CRITICAL: DEFINE TASKS FOR VALIDATOR
     TASKS = [
-        {"id": "easy-clean"},
-        {"id": "medium-clean"},
-        {"id": "hard-clean"},
+        {
+            "id": "easy-clean",
+            "description": "Simple dataset with missing values",
+        },
+        {
+            "id": "medium-clean",
+            "description": "Dataset with missing + duplicates",
+        },
+        {
+            "id": "hard-clean",
+            "description": "Dataset with missing, duplicates, inconsistent values",
+        },
     ]
 
     def __init__(self):
@@ -153,8 +162,13 @@ class DataCleaningEnvironment(Environment):
 
         # 🔥 REQUIRED FOR VALIDATOR
         obs.score = float(score)
-        self._state.score = float(score)
+        # self._state.score = float(score)
 
+        # return StepResult(
+        #     observation=obs,
+        #     reward=float(self.total_reward),
+        #     done=done
+        # )
         return obs
 
     # =========================

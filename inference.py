@@ -8,7 +8,9 @@ from client import DataCleaningEnv
 from models import DataCleaningAction
 
 API_BASE_URL = os.getenv("API_BASE_URL", "https://router.huggingface.co/v1")
-MODEL_NAME = os.getenv("MODEL_NAME", "meta-llama/Meta-Llama-3-8B-Instruct")
+# MODEL_NAME = os.getenv("MODEL_NAME", "meta-llama/Meta-Llama-3.2-3B-Instruct")
+MODEL_NAME = os.getenv("MODEL_NAME", "Qwen/Qwen2.5-7B-Instruct")
+# MODEL_NAME = os.getenv("MODEL_NAME", "mistralai/Mistral-7B-Instruct-v0.2")
 HF_TOKEN = os.getenv("HF_TOKEN")
 
 ENV_URL = os.getenv("ENV_URL", "http://localhost:7860")
@@ -100,6 +102,7 @@ Return ONLY valid JSON:
                 else:
                     try:
                         action_text = response.choices[0].message.content
+                        print(f"🔍 RAW LLM RESPONSE:\n{action_text}\n")
                     except Exception:
                         print("❌ Bad model response")
                         action_text = ""
