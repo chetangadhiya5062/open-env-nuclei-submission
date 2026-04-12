@@ -129,21 +129,12 @@ Return ONLY valid JSON:
                         action_json = json.loads(action_text)
                         if isinstance(action_json, list):
                             action_json = action_json[0]
-
                     except Exception:
-                        print("❌ JSON parse failed, trying recovery")
-
-                        # 🔥 TRY TO EXTRACT VALUE FROM TEXT
-                        value_match = re.search(r'"value"\s*:\s*"?([^",}]+)"?', action_text)
-                        column_match = re.search(r'"column_name"\s*:\s*"?([^",}]+)"?', action_text)
-
-                        extracted_value = value_match.group(1) if value_match else "missing"
-                        extracted_column = column_match.group(1) if column_match else obs.column_names[0]
-
+                        print("❌ JSON parse failed, fallback")
                         action_json = {
                             "action_type": "fill_missing",
-                            "column_name": extracted_column,
-                            "value": extracted_value
+                            "column_name": obs.column_names[0],
+                            "value": "missing"
                         }
 
                 # =========================
