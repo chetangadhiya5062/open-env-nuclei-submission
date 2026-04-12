@@ -5,6 +5,13 @@
 Data Cleaning Env Environment Implementation.
 """
 
+# Copyright (c) Meta Platforms, Inc. and affiliates.
+# All rights reserved.
+
+"""
+Data Cleaning Env Environment Implementation.
+"""
+
 import pandas as pd
 from uuid import uuid4
 
@@ -145,6 +152,7 @@ class DataCleaningEnvironment(Environment):
         obs.done = done
 
         # 🔥 REQUIRED FOR VALIDATOR
+        obs.score = float(score)
         self._state.score = float(score)
 
         return obs
@@ -155,17 +163,21 @@ class DataCleaningEnvironment(Environment):
     def _compute_score(self, missing, duplicates):
         total_initial = self.initial_missing + self.initial_duplicates
 
-        if total_initial == 0:
+        if total_initial <= 0:
             return 0.5
 
         current_total = missing + duplicates
-
         progress = 1 - (current_total / total_initial)
 
-        # 🔥 STRICT RANGE
-        score = max(0.05, min(0.95, progress))
+        # 🔥 SAFE RANGE BUFFER
+        eps = 0.1   # buffer to avoid edge cases
 
-        return float(score)
+        if progress <= 0:
+            return 0.1
+        elif progress >= 1:
+            return 0.9
+        else:
+            return float(max(0.1, min(0.9, progress)))
 
     # =========================
     # OBS
